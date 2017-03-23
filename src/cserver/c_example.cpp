@@ -17,9 +17,9 @@ int main()
     CROW_ROUTE(app, "/initialize")
     ([]() {
         if (janus_initialize("/nfs/isicvlnas01/users/xpeng/projects/Janus/release/janus-isi-sdk-feb/", "/tmp/", "", 0) == 0) {
-					return "successful";
+					return "initialize successful";
 				} else {
-					return "failed";
+					return "initialize failed";
 				}
     });
 
@@ -120,8 +120,8 @@ int main()
       janus_delete_gallery(gallery);
       janus_delete_template(template1);
 
-      // if (s_res != 0)
-      //   return response("janus_search failed");
+      if (s_res != 0)
+        return response("janus_search failed");
 
 
 
@@ -138,9 +138,9 @@ int main()
 		CROW_ROUTE(app, "/finalize")
     ([]() {
         if (janus_finalize() == 0) {
-					return "successful";
+          return "finalize successful";
 				} else {
-					return "failed";
+					return "finalize failed";
 				}
     });
 
