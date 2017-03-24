@@ -1,6 +1,7 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <csignal>
 #include "crow_all.h"
 #include "iarpa_janus_io.h"
 #include "iarpa_janus.h"
@@ -10,19 +11,23 @@
 using namespace std;
 using namespace crow;
 
+void signalHandler( int signum ) {
+   cout << "Finalize Janus" << endl;
+   janus_finalize();
+   exit(signum);
+
+}
+
 int main()
 {
     crow::SimpleApp app;
 
-    CROW_ROUTE(app, "/initialize")
-    ([]() {
-        if (janus_initialize("/nfs/isicvlnas01/users/xpeng/projects/Janus/release/janus-isi-sdk-feb/", "/tmp/", "", 0) == 0) {
-					return "initialize successful";
-				} else {
-					return "initialize failed";
-				}
-    });
+    // initialize janus
+    cout << "Initialize Janus" << endl;
+    janus_initialize("/nfs/isicvlnas01/users/xpeng/projects/Janus/release/janus-isi-sdk-feb/", "/tmp/", "", 0);
 
+    // finalize janus when program abort
+    signal(SIGINT, signalHandler);
 
 		CROW_ROUTE(app, "/search")
     .methods("POST"_method)
@@ -133,15 +138,6 @@ int main()
 
       return response(result);
 
-    });
-
-		CROW_ROUTE(app, "/finalize")
-    ([]() {
-        if (janus_finalize() == 0) {
-          return "finalize successful";
-				} else {
-					return "finalize failed";
-				}
     });
 
     app.port(8080).run();
