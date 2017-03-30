@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -21,6 +22,10 @@ void signalHandler( int signum ) {
 int main()
 {
     crow::SimpleApp app;
+
+    // clear upload directory
+    // TODO change to the right directory at deployment
+    std::system("exec rm -r /nfs/div2/jchen/test/uploads/*");
 
     // initialize janus
     cout << "Initialize Janus" << endl;
