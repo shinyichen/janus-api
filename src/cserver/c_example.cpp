@@ -25,7 +25,7 @@ int main()
 
     // clear upload directory
     // TODO change to the right directory at deployment
-    std::system("exec rm -r /nfs/div2/jchen/test/uploads/*");
+    std::system("exec rm -r /nfs/div2/jchen/face-search/uploads/*");
 
     // initialize janus
     cout << "Initialize Janus" << endl;
@@ -86,7 +86,6 @@ int main()
   		  attributes.frame_number = NAN;
 
         // create janus_track from janus_attributes
-  		  // TODO what about detection_confidence?, gender?, age?, skin_tone?, frame_rate?
   		  janus_track track;
   		  track.track.push_back(attributes);
 
