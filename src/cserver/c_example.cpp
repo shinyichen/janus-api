@@ -55,47 +55,64 @@ int main()
         string image_path = json::dump(img["image_path"]);
         // remove double quotes from string
         image_path.erase(remove(image_path.begin(), image_path.end(), '\"' ), image_path.end());
-        double face_x = img["face_x"].d();
-        double face_y = img["face_y"].d();
-        double face_width = img["face_width"].d();
-        double face_height = img["face_height"].d();
-
-        cout << image_path << ":" << to_string(face_x) << "," << to_string(face_y) << "," << to_string(face_width) << "," << to_string(face_height) << endl;
 
         // create media from image path
         janus_media media;
         janus_load_media(image_path, media);
 
-        // create janus_attributes
-  			janus_attributes attributes;
-  			attributes.face_x = face_x;
-  			attributes.face_y = face_y;
-  			attributes.face_width = face_width;
-  			attributes.face_height = face_height;
-  			attributes.right_eye_x = NAN;
-  		  attributes.right_eye_y = NAN;
-  		  attributes.left_eye_x = NAN;
-  		  attributes.left_eye_y = NAN;
-  		  attributes.nose_base_x = NAN;
-  		  attributes.nose_base_y = NAN;
-  		  attributes.face_yaw = NAN;
-  		  attributes.forehead_visible = NAN;
-  		  attributes.eyes_visible = NAN;
-  		  attributes.nose_mouth_visible = NAN;
-  		  attributes.indoor = NAN;
-  		  attributes.frame_number = NAN;
-
         // create janus_track from janus_attributes
   		  janus_track track;
-  		  track.track.push_back(attributes);
 
-        // create janus_association from janus_media, janus_track
-  		  janus_association association;
-  		  association.media = media;
-  		  association.metadata = track;
+        // if has attributes
+        if (img.has("face_x")) {
+          cout << "has bounding box" << endl;
+          double face_x = img["face_x"].d();
+          double face_y = img["face_y"].d();
+          double face_width = img["face_width"].d();
+          double face_height = img["face_height"].d();
 
-        // for each image, create an association
-  		  associations.push_back(association);
+          cout << image_path << ":" << to_string(face_x) << "," << to_string(face_y) << "," << to_string(face_width) << "," << to_string(face_height) << endl;
+
+          // create janus_attributes
+    			janus_attributes attributes;
+    			attributes.face_x = face_x;
+    			attributes.face_y = face_y;
+    			attributes.face_width = face_width;
+    			attributes.face_height = face_height;
+    			attributes.right_eye_x = NAN;
+    		  attributes.right_eye_y = NAN;
+    		  attributes.left_eye_x = NAN;
+    		  attributes.left_eye_y = NAN;
+    		  attributes.nose_base_x = NAN;
+    		  attributes.nose_base_y = NAN;
+    		  attributes.face_yaw = NAN;
+    		  attributes.forehead_visible = NAN;
+    		  attributes.eyes_visible = NAN;
+    		  attributes.nose_mouth_visible = NAN;
+    		  attributes.indoor = NAN;
+    		  attributes.frame_number = NAN;
+
+  		    track.track.push_back(attributes);
+
+
+          // create janus_association from janus_media, janus_track
+    		  janus_association association;
+    		  association.media = media;
+    		  association.metadata = track;
+
+          // for each image, create an association
+    		  associations.push_back(association);
+        } else { // no attributes
+
+          cout << "has no bounding box" << endl;
+          vector<janus_track> tracks;
+          janus_detect(media, 50, tracks);
+
+          janus_association association;
+    		  association.media = media;
+    		  association.metadata = tracks[0];
+          associations.push_back(association);
+        }
       }
 
       cout << "========== CServer: Creating Template ==============" << endl;
