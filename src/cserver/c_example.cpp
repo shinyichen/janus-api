@@ -34,6 +34,36 @@ int main()
     // finalize janus when program abort
     signal(SIGINT, signalHandler);
 
+    CROW_ROUTE(app, "/autodetect")
+    .methods("POST"_method)
+    ([](const request& req) {
+      auto body = json::load(req.body);
+      if (!body)
+        return response(400);
+
+      string image_path = json::dump(body["image_path"]);
+      // remove double quotes from string
+      image_path.erase(remove(image_path.begin(), image_path.end(), '\"' ), image_path.end());
+
+      janus_media media;
+      janus_load_media(image_path, media);
+
+      cout << "========== CServer: detect bounding box ============" << endl;
+      vector<janus_track> tracks;
+      janus_detect(media, 50, tracks);
+      janus_attributes attributes = tracks[0].track[0];
+
+      janus_free_media(media);
+
+      json::wvalue result;
+      result["face_x"] = attributes.face_x;
+      result["face_y"] = attributes.face_y;
+      result["face_width"] = attributes.face_width;
+      result["face_height"] = attributes.face_height;
+
+      return response(result);
+    });
+
 		CROW_ROUTE(app, "/search")
     .methods("POST"_method)
     ([](const request& req) {
