@@ -48,9 +48,15 @@ int main()
 
       cout << "========== CServer: Process inputs ==============" << endl;
 
-      int image_count = arr.size();
+      // get settings, which is first object in array
+      int maxResults = arr[0]["maxResults"].i();
+      if (maxResults > 50 || maxResults < 0) {
+        maxResults = 20;
+      }
+
+      int image_count = arr.size() - 1;
       vector<janus_association> associations;
-      for (int i = 0; i < image_count; i ++) {
+      for (int i = 1; i < image_count+1; i ++) {
         auto img = arr[i];
         string image_path = json::dump(img["image_path"]);
         // remove double quotes from string
@@ -142,7 +148,7 @@ int main()
 
       vector<janus_template_id> return_template_ids;
       vector<double> similarities;
-      int s_res = janus_search(template1, gallery, 50, return_template_ids, similarities);
+      int s_res = janus_search(template1, gallery, maxResults, return_template_ids, similarities);
       janus_delete_gallery(gallery);
       janus_delete_template(template1);
 
