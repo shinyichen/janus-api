@@ -6,6 +6,8 @@
 #include "crow_all.h"
 #include "iarpa_janus_io.h"
 #include "iarpa_janus.h"
+#include "janus_debug.h"
+// #include <opencv2/highgui/highgui.hpp>
 
 // to compile
 // c++ -Wall -std=c++1y -pedantic -Wextra c_example.cpp -I include -Llib -lboost_system (-lglaive) -o c_example.out
@@ -60,6 +62,76 @@ int main()
       result["face_y"] = attributes.face_y;
       result["face_width"] = attributes.face_width;
       result["face_height"] = attributes.face_height;
+
+      return response(result);
+    });
+
+    CROW_ROUTE(app, "/debug")
+    .methods("POST"_method)
+    ([](const request& req) {
+      auto body = json::load(req.body);
+      if (!body)
+        return response(400);
+
+      string image_path = json::dump(body["image_path"]);
+      // remove double quotes from string
+      image_path.erase(remove(image_path.begin(), image_path.end(), '\"' ), image_path.end());
+
+      janus_media media;
+      janus_load_media(image_path, media);
+
+      double face_x = body["face_x"].d();
+      double face_y = body["face_y"].d();
+      double face_width = body["face_width"].d();
+      double face_height = body["face_height"].d();
+
+      // create janus_attributes
+      janus_attributes attributes;
+      attributes.face_x = face_x;
+      attributes.face_y = face_y;
+      attributes.face_width = face_width;
+      attributes.face_height = face_height;
+      attributes.right_eye_x = NAN;
+      attributes.right_eye_y = NAN;
+      attributes.left_eye_x = NAN;
+      attributes.left_eye_y = NAN;
+      attributes.nose_base_x = NAN;
+      attributes.nose_base_y = NAN;
+      attributes.face_yaw = NAN;
+      attributes.forehead_visible = NAN;
+      attributes.eyes_visible = NAN;
+      attributes.nose_mouth_visible = NAN;
+      attributes.indoor = NAN;
+      attributes.frame_number = NAN;
+
+      janus_track track;
+      track.track.push_back(attributes);
+
+      // create janus_association from janus_media, janus_track
+      janus_association association;
+      association.media = media;
+      association.metadata = track;
+      janus_template_role role;
+
+      cv::Mat cropped, rend_fr, rend_hp, rend_fp, aligned;
+      float yaw, confidence;
+      std::vector<cv::Point2f> landmarks;
+
+      janus_debug(association, role, cropped, rend_fr, rend_hp, rend_fp, aligned, yaw, landmarks, confidence);
+
+      janus_free_media(media);
+
+      json::wvalue result;
+      result["yaw"] = yaw;
+      result["confidence"] = confidence;
+      for (int i = 0; i < landmarks.size(); i++){
+        result["landmarks"][i]["x"] = landmarks[i].x;
+        result["landmarks"][i]["y"] = landmarks[i].y;
+      }
+
+      // string path = "/nfs/div2/jchen/face-search/uploads/" + image_path + "_rend_fr";
+      // imwrite(path, rend_fr);
+      // result["rend_fr"] = path;
 
       return response(result);
     });

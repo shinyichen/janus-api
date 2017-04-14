@@ -1,4 +1,5 @@
 #include "iarpa_janus.h"
+#include "janus_debug.h"
 #include "CnnServer.hpp"
 #include "PyServer.hpp"
 #include "ImagePreproc.hpp"
@@ -108,7 +109,7 @@ JANUS_EXPORT janus_error janus_initialize(const std::string &sdk_path,
     // Start up CNN server (only one globally, across all processes on a machine)
     janus_error status = cnnServer.spawnCnnWorker(sdk_path, gpu_dev);
     if (status != JANUS_SUCCESS) return status;
-  
+
     // Initialize Preproc Class (one per process)
     status = preproc.initialize(sdk_path);
     if (status != JANUS_SUCCESS) return status;
@@ -147,7 +148,7 @@ JANUS_EXPORT janus_error janus_initialize(const std::string &sdk_path,
 
 
   ////////////////////////////////////////////////////////////////////////////////////////////////
-  // Load python modules and start python server 
+  // Load python modules and start python server
   {
     libconfig::Config cfg;
     std::string py_config_file = sdk_path + "/" + "py.config";
@@ -187,7 +188,7 @@ JANUS_EXPORT janus_error janus_initialize(const std::string &sdk_path,
 
       libconfig::Setting &tracker_param = root["py_params"]["tracker_params"];
       tracker_param.lookupValue("module", tracker_module);
-      tracker_param.lookupValue("func", tracker_func); 
+      tracker_param.lookupValue("func", tracker_func);
     } catch (const libconfig::SettingNotFoundException &nfex) {
       std::cerr << "Could not find setting in py.config file." << std::endl;
       return JANUS_UNKNOWN_ERROR;
@@ -209,9 +210,9 @@ JANUS_EXPORT janus_error janus_initialize(const std::string &sdk_path,
       std::cerr << "Could not parse " << face_detect_config_file << "." << std::endl;
       return JANUS_PARSE_ERROR;
     }
-  
+
     std::string yolo_cfgfile, yolo_weightfile;
-  
+
     try {
       cfg.lookupValue("yolo_cfg", yolo_cfgfile);
       cfg.lookupValue("yolo_model", yolo_weightfile);
@@ -225,7 +226,7 @@ JANUS_EXPORT janus_error janus_initialize(const std::string &sdk_path,
       std::cerr << "Could not find setting in face-detect.config file." << std::endl;
       return JANUS_UNKNOWN_ERROR;
     }
-  
+
     // TODO -- MUST use GPU advised by gpu_dev
     init_yolo(yolo_cfgfile.c_str(), yolo_weightfile.c_str());
 
@@ -244,7 +245,7 @@ bool is_image(janus_association assoc) {
 
 
 float sign(float num) {
-  return num < 0 ? -1 : 1; 
+  return num < 0 ? -1 : 1;
 }
 
 void power_normization(std::vector<float> &fv, float pow) {
@@ -383,7 +384,7 @@ std::vector<featv_t> do_feature_extraction_batch(std::vector<cv::Mat> images) {
     cblas_sgemv(CblasRowMajor, CblasNoTrans, transformed_feat_dim, raw_feat_dim, 1.0f, reinterpret_cast<const float*>(backupPCATransform.data), raw_feat_dim, &(feature_vector[0]), 1, 0.0f, &(transformed_feature_vector[0]), 1);
 
     power_normization(transformed_feature_vector, 0.65);
-  
+
     std::cout << "Pushing vector and moving on" << std::endl;
     feature_vectors.push_back(transformed_feature_vector);
   }
@@ -394,6 +395,171 @@ std::vector<featv_t> do_feature_extraction_batch(std::vector<cv::Mat> images) {
   return feature_vectors;
 }
 
+void extract_features_debug(int frame_num,
+                            const janus_template_role role,
+                            janus_association cur_association,
+                            std::vector<featv_t> &featv_list,
+                            std::vector<janus_error> &status_list,
+                            pthread_mutex_t mtx,
+                            cv::Mat &croppedImg,
+                            cv::Mat &rendFrontalImg,
+                            cv::Mat &rendHalfProfileImg,
+                            cv::Mat &rendFullProfileImg,
+                            cv::Mat &alignedImg,
+                            float &yaw,
+                            std::vector<cv::Point2f> &landmarks,
+                            float &confidence)
+{
+  // First convert Janus media object into OpenCV object
+  janus_error status;
+
+  cv::Mat origImage;
+
+  status = preproc.convertJanusMediaImageToOpenCV(cur_association.media, frame_num, origImage);
+  if (status != JANUS_SUCCESS) {
+    pthread_mutex_lock(&mtx);
+    status_list.push_back(status);
+    featv_t empty_fv;
+    featv_list.push_back(empty_fv);
+    pthread_mutex_unlock(&mtx);
+    return;
+  }
+
+  // Determine pose
+  janus_attributes metadata_attributes = cur_association.metadata.track[frame_num];
+  int face_type = pose_detector.detect_pose(origImage, metadata_attributes.face_x, metadata_attributes.face_y, metadata_attributes.face_width, metadata_attributes.face_height);
+
+  std::cout << "Found face type: " << face_type << std::endl;
+
+  // Now run preprocessing (i.e. landmarks + alignment + rendering)
+  status = preproc.process_withrender_debug(origImage, cur_association.metadata.track[frame_num], face_type, croppedImg, rendFrontalImg, rendHalfProfileImg, rendFullProfileImg, alignedImg, yaw, landmarks, confidence);
+
+  if (status != JANUS_SUCCESS) {
+    pthread_mutex_lock(&mtx);
+    status_list.push_back(status);
+    featv_t empty_fv;
+    featv_list.push_back(empty_fv);
+    pthread_mutex_unlock(&mtx);
+    return;
+  }
+
+  // Now send preprocessed images to CNN Featex Server
+  // For Pooling we do the following:
+  //    If landmark worked:  pooled_feat = (1.0*real_aligned_feat + 0.3*rend_hp_feat + 0.3*rend_fp_feat + 0.3*rend_fr_feat)/(1+0.3+0.3+0.3)
+  //     (note: if no rend-frontal-feat available, remove the term from numerator+denominator)
+  //    If no landmarks: pooled_feat = cropped_image_feat
+  featv_t pooled_feature_vector;
+
+  std::cout << "Done with preproc, now on to featex" << std::endl;
+  if (!croppedImg.empty()) {
+    // Send over cropped image for feature extraction
+    std::cout << "Only have cropped image, so doing featex of cropped image" << std::endl;
+
+    try {
+      pooled_feature_vector = do_feature_extraction(croppedImg);
+    } catch (const std::exception &e) {
+      std::cout << "Error: in feature extraction. Exception = " << e.what() << std::endl;
+      pthread_mutex_lock(&mtx);
+      status_list.push_back(JANUS_UNKNOWN_ERROR);
+      featv_t empty_fv;
+      featv_list.push_back(empty_fv);
+      pthread_mutex_unlock(&mtx);
+      return;
+    }
+  } else {
+    if (alignedImg.empty() || rendHalfProfileImg.empty() || rendFullProfileImg.empty()) {
+      std::cout << "Error: aligned or rendHalf or rendFull is empty -- shouldn't be the case given crop was empty(!)" << std::endl;
+      pthread_mutex_lock(&mtx);
+      status_list.push_back(status);
+      featv_t empty_fv;
+      featv_list.push_back(empty_fv);
+      pthread_mutex_unlock(&mtx);
+      return;
+    }
+
+    std::vector<cv::Mat> images;
+    images.push_back(alignedImg);
+    images.push_back(rendHalfProfileImg);
+    images.push_back(rendFullProfileImg);
+
+    float render_weight = 1.0f/3.0f;
+    float denom = 1.0f + render_weight*2;
+    if (!rendFrontalImg.empty()) {
+      images.push_back(rendFrontalImg);
+      denom += render_weight;
+    }
+
+    std::cout << "About to call feature extraction batch on rendered images" << std::endl;
+    auto start_time = std::chrono::steady_clock::now();
+    std::vector<featv_t> feature_vectors;
+
+    try {
+      feature_vectors = do_feature_extraction_batch(images);
+    } catch (const std::exception &e) {
+      std::cout << "Error: in feature extraction(batch). Exception = " << e.what() << std::endl;
+      pthread_mutex_lock(&mtx);
+      status_list.push_back(JANUS_UNKNOWN_ERROR);
+      featv_t empty_fv;
+      featv_list.push_back(empty_fv);
+      pthread_mutex_unlock(&mtx);
+      return;
+    }
+
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time);
+    std::cout << "Batch featex took: " << duration.count() << " ms" << std::endl;
+
+    std::cout << "About to pool rendered features" << std::endl;
+
+    pooled_feature_vector = feature_vectors[0]; // (alignedImg has a weight of 1.0 in weighted average)
+    size_t feat_dim = feature_vectors[0].size();
+
+    if (feat_dim == 0) {
+      std::cout << "Error: CNN Returned feature vector of dimension 0!" << std::endl;
+      pthread_mutex_lock(&mtx);
+      status_list.push_back(status);
+      featv_t empty_fv;
+      featv_list.push_back(empty_fv);
+      pthread_mutex_unlock(&mtx);
+      return;
+    }
+
+    for (int i = 1; i < feature_vectors.size(); ++i) {
+      if (feat_dim != feature_vectors[i].size()) {
+	std::cout << "Error: CNN Returned feature vectors of different dimensions [" << feat_dim << "] vs [" << feature_vectors[i].size() << "]" << std::endl;
+	pthread_mutex_lock(&mtx);
+	status_list.push_back(status);
+	featv_t empty_fv;
+	featv_list.push_back(empty_fv);
+	pthread_mutex_unlock(&mtx);
+	return;
+      }
+
+      cblas_saxpy(feat_dim, render_weight, &(feature_vectors[i][0]), 1, &(pooled_feature_vector[0]), 1);
+    }
+    cblas_sscal(feat_dim, 1.0f/denom, &(pooled_feature_vector[0]), 1);
+
+    // Finally do power-norm on pooled feature
+    power_normization(pooled_feature_vector, 0.65);
+
+    std::cout << "Done with rendered pooling" << std::endl;
+  }
+
+  // And then add it to return list of feature vectors
+  if (pooled_feature_vector.size() != 0)
+  {
+    std::cout << "Adding poooled feature to list" << std::endl;
+    int pstatus = pthread_mutex_lock(&mtx);
+    if (pstatus != 0) perror("Could not take lock");
+
+    featv_list.push_back(pooled_feature_vector);
+    status_list.push_back(JANUS_SUCCESS);
+
+    pstatus = pthread_mutex_unlock(&mtx);
+    if (pstatus != 0) perror("Could not release lock");
+
+    std::cout << "Done adding pooled feature to list" << std::endl;
+  }
+}
 
 void extract_features(int frame_num, const janus_template_role role, janus_association cur_association, std::vector<featv_t> &featv_list, std::vector<janus_error> &status_list, pthread_mutex_t mtx)
 {
@@ -608,6 +774,78 @@ janus_error do_pooling(std::vector< featv_t > &featv_list, std::vector< janus_er
   return JANUS_SUCCESS;
 }
 
+JANUS_EXPORT janus_error janus_debug(janus_association &association,
+                        const janus_template_role role,
+                        cv::Mat &cropped,
+                        cv::Mat &rend_fr,
+                        cv::Mat &rend_hp,
+                        cv::Mat &rend_fp,
+                        cv::Mat &aligned,
+                        float &yaw,
+                        std::vector<cv::Point2f> &landmarks,
+                        float &confidence)
+{
+  // Need to send images to CNN Server in big batch; to do this set up background worker threads
+  std::vector<std::thread>  workers;
+
+  std::vector< featv_t > featv_list;
+  std::vector< janus_error > status_list;
+  pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER;
+
+
+  // For each image in tempalte, startup a new thread
+
+    if (is_image(association)) {
+      workers.push_back(std::thread(extract_features_debug, /*frameNum=*/0, role, std::ref(association),
+				    std::ref(featv_list), std::ref(status_list), std::ref(mtx),
+            std::ref(cropped), std::ref(rend_fr), std::ref(rend_hp), std::ref(rend_fp), std::ref(aligned), std::ref(yaw), std::ref(landmarks), std::ref(confidence)));
+
+      // Because landmark detector is not thread safe, we have to do a join here, to do sequentially
+      // TODO: create "thread pool" of landmark detectors that is actually a "process pool", i.e. forked processes
+      for (std::thread& t : workers)
+	t.join();
+      workers.clear();
+    } else { // video
+      // Okay either we have a collection of frames, or we have all frames from a video
+      std::vector< featv_t > video_featv_list;
+      std::vector< janus_error > video_status_list;
+      pthread_mutex_t video_mtx = PTHREAD_MUTEX_INITIALIZER;
+      for (int frame_num = 0; frame_num < association.media.data.size(); ++frame_num) {
+	workers.push_back(std::thread(extract_features_debug, frame_num, role, std::ref(association),
+				      std::ref(video_featv_list), std::ref(video_status_list), std::ref(video_mtx),
+              std::ref(cropped), std::ref(rend_fr), std::ref(rend_hp), std::ref(rend_fp), std::ref(aligned), std::ref(yaw), std::ref(landmarks), std::ref(confidence)));
+
+	for (std::thread& t : workers)
+	  t.join();
+	workers.clear();
+      }
+
+      // Do pooling for video seperately, then add to template feat list
+      int valid_cnt;
+      featv_t pooled_video_feat;
+      janus_error status = do_pooling(video_featv_list, video_status_list, valid_cnt, pooled_video_feat);
+      if (status == JANUS_SUCCESS && valid_cnt > 0) {
+	// If we succesfully pooled video features, let's add them to the list of template feature vectors
+	//  (Which will undergo second round of pooling below
+
+	int pstatus = pthread_mutex_lock(&mtx);
+	if (pstatus != 0) perror("Could not take lock");
+
+	featv_list.push_back(pooled_video_feat);
+	status_list.push_back(JANUS_SUCCESS);
+
+	pstatus = pthread_mutex_unlock(&mtx);
+	if (pstatus != 0) perror("Could not release lock");
+      }
+    }
+
+
+  // Wait for all threads to finish
+  for (std::thread& t : workers)
+    t.join();
+
+  return JANUS_SUCCESS;
+}
 
 JANUS_EXPORT janus_error janus_create_template(std::vector<janus_association> &associations,
                                                const janus_template_role role,
@@ -695,6 +933,104 @@ JANUS_EXPORT janus_error janus_create_template(std::vector<janus_association> &a
   return JANUS_SUCCESS;
 }
 
+// JANUS_EXPORT janus_error janus_create_template_debug(std::vector<janus_association> &associations,
+//                                                const janus_template_role role,
+//                                                janus_template &template_,
+//                                                std::vector<cv::Mat> &out_cropped,
+//                                              	 std::vector<cv::Mat> &out_rend_fr,
+//                                              	 std::vector<cv::Mat> &out_rend_hp,
+//                                              	 std::vector<cv::Mat> &out_rend_fp,
+//                                              	 std::vector<cv::Mat> &out_aligned,
+//                                              	 float *out_yaw,
+//                                              	 std::vector<std::vector<cv::Point2f>> &out_landmarks,
+//                                              	 float *out_confidence)
+// {
+//   // Need to send images to CNN Server in big batch; to do this set up background worker threads
+//   std::vector<std::thread>  workers;
+//
+//   std::vector< featv_t > featv_list;
+//   std::vector< janus_error > status_list;
+//   pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER;
+//
+//   std::cout << "Starting template creation" << std::endl;
+//
+//   int i = 0;
+//
+//   // For each image in tempalte, startup a new thread
+//   for (auto &&cur_association : associations) {
+//     if (is_image(cur_association)) {
+//       workers.push_back(std::thread(extract_features_debug, /*frameNum=*/0, role, std::ref(cur_association),
+// 				    std::ref(featv_list), std::ref(status_list), std::ref(mtx),
+//             std::ref(out_cropped[i]), std::ref(out_rend_fr[i]), std::ref(out_rend_hp[i]), std::ref(out_rend_fp[i]),
+//             std::ref(out_aligned[i])));// std::ref(out_yaw[i]), std::ref(out_landmarks[i]), std::ref(out_confidence[i])));
+//       // Because landmark detector is not thread safe, we have to do a join here, to do sequentially
+//       // TODO: create "thread pool" of landmark detectors that is actually a "process pool", i.e. forked processes
+//       for (std::thread& t : workers)
+//         t.join();
+//       workers.clear();
+//     } else { // video
+//       // Okay either we have a collection of frames, or we have all frames from a video
+//       std::vector< featv_t > video_featv_list;
+//       std::vector< janus_error > video_status_list;
+//       pthread_mutex_t video_mtx = PTHREAD_MUTEX_INITIALIZER;
+//       for (int frame_num = 0; frame_num < cur_association.media.data.size(); ++frame_num) {
+// 	workers.push_back(std::thread(extract_features, frame_num, role, std::ref(cur_association),
+// 				      std::ref(video_featv_list), std::ref(video_status_list), std::ref(video_mtx)));
+//
+// 	for (std::thread& t : workers)
+// 	  t.join();
+// 	workers.clear();
+//       }
+//
+//       // Do pooling for video seperately, then add to template feat list
+//       int valid_cnt;
+//       featv_t pooled_video_feat;
+//       janus_error status = do_pooling(video_featv_list, video_status_list, valid_cnt, pooled_video_feat);
+//       if (status == JANUS_SUCCESS && valid_cnt > 0) {
+// 	// If we succesfully pooled video features, let's add them to the list of template feature vectors
+// 	//  (Which will undergo second round of pooling below
+//
+// 	int pstatus = pthread_mutex_lock(&mtx);
+// 	if (pstatus != 0) perror("Could not take lock");
+//
+// 	featv_list.push_back(pooled_video_feat);
+// 	status_list.push_back(JANUS_SUCCESS);
+//
+// 	pstatus = pthread_mutex_unlock(&mtx);
+// 	if (pstatus != 0) perror("Could not release lock");
+//       }
+//     }
+//     i++;
+//   }
+//
+//   // Wait for all threads to finish
+//   for (std::thread& t : workers)
+//     t.join();
+//
+//   std::cout << "Done with featex for this template, moving on..." << std::endl;
+//
+//   // Make sure we got features back
+//   if (featv_list.size() == 0)
+//     return JANUS_FAILURE_TO_ENROLL;
+//
+//
+//   int valid_cnt;
+//   featv_t pooled_feature_vector;
+//   janus_error status = do_pooling(featv_list, status_list, valid_cnt, pooled_feature_vector);
+//
+//   if (status != JANUS_SUCCESS) return status;
+//   if (valid_cnt == 0) return JANUS_SUCCESS;
+//
+//
+//   // Now construct template using the computed feature vectors
+//   template_ = new janus_template_type;
+//   template_->pooled_feat = pooled_feature_vector;
+//
+//
+//   std::cout << "Done with template." << std::endl;
+//   return JANUS_SUCCESS;
+// }
+
 int max_index(float *a, int n)
 {
   if(n <= 0) return -1;
@@ -756,7 +1092,7 @@ void convert_box_to_track( box *boxes, float **probs, size_t num_boxes, size_t y
     boundingboxes.push_back( rect );
   }
 
-} 
+}
 
 void convert_box_to_track( const int minx, const int maxx, const int miny, const int maxy, double frame_number, const int track_id,
                            const size_t min_face_size, janus_track &track )
@@ -878,7 +1214,7 @@ JANUS_EXPORT janus_error janus_detect(const janus_media &media,
     if (!py_init) {
       Py_Initialize();
       init_numpy();
-      py_init = true; 
+      py_init = true;
     }
 
     // Process the remaining frames
@@ -915,7 +1251,7 @@ JANUS_EXPORT janus_error janus_detect(const janus_media &media,
       pVideoBuff = PyArray_SimpleNewFromData(ND, dims, NPY_UINT8, reinterpret_cast<void*>(video_buf));
       if (pVideoBuff == NULL) {
         std::cerr << "Converting args from c++ to python for " << tracker_func << "failed." << std::endl;
-        goto FAIL_NP_ARRAY; 
+        goto FAIL_NP_ARRAY;
       }
       np_arr = reinterpret_cast<PyArrayObject*>(pVideoBuff);
 
@@ -944,7 +1280,7 @@ JANUS_EXPORT janus_error janus_detect(const janus_media &media,
       }
 
       // For each initial bounding box
-      for (size_t track_id = 0; track_id < initial_bounding_boxes.size(); ++track_id) { 
+      for (size_t track_id = 0; track_id < initial_bounding_boxes.size(); ++track_id) {
         // get init bounding box
         PyObject *pBoxBuff, *pReturn;
         PyArrayObject *np_box_arr;
@@ -958,15 +1294,15 @@ JANUS_EXPORT janus_error janus_detect(const janus_media &media,
         if (pBoxBuff == NULL) {
           std::cerr << "Converting box information from c++ to python failed." << std::endl;
           continue;
-        } 
+        }
         np_box_arr = reinterpret_cast<PyArrayObject*>(pBoxBuff);
 
         // Calling python function
         std::cout << "calling alien_tracker" << std::endl;
-        pReturn = PyObject_CallFunctionObjArgs(pFunc, np_arr, np_box_arr, NULL); 
+        pReturn = PyObject_CallFunctionObjArgs(pFunc, np_arr, np_box_arr, NULL);
         if (pReturn == NULL) {
           std::cerr << "Executing python function " << tracker_func << " failed." << std::endl;
-          goto FAIL_CALL; 
+          goto FAIL_CALL;
         }
         if (!PyList_Check(pReturn)) {
           std::cerr << "Python function " << tracker_func << " did not return list." << std::endl;
@@ -994,13 +1330,13 @@ JANUS_EXPORT janus_error janus_detect(const janus_media &media,
           convert_box_to_track( minx, maxx, miny, maxy, frame_num, track_id,
                                 min_face_size, tracks[track_id] );
 
-          Py_XDECREF(bbox); 
+          Py_XDECREF(bbox);
         }
 
         Py_XDECREF(pBoxBuff);
         Py_XDECREF(pReturn);
       }
-      
+
   // clean up
 FAIL_DIM:
 FAIL_LIST_CHECK:
@@ -1058,7 +1394,7 @@ JANUS_EXPORT janus_error janus_create_template(const janus_media &media,
       cur_media.step        = media.step;
       cur_media.color_space = media.color_space;
       cur_media.data.push_back( media.data[frame_id] );
-      
+
       janus_track metadata;
       metadata.detection_confidence = cur_track.detection_confidence;
       metadata.gender     = cur_track.gender;
@@ -1066,13 +1402,13 @@ JANUS_EXPORT janus_error janus_create_template(const janus_media &media,
       metadata.skin_tone  = cur_track.skin_tone;
       metadata.frame_rate = cur_track.frame_rate;
 
-      metadata.track.push_back( cur_track.track[j] ); 
+      metadata.track.push_back( cur_track.track[j] );
 
       janus_association association;
       association.media    = cur_media;
       association.metadata = metadata;
 
-      associations.push_back( association ); 
+      associations.push_back( association );
     }
 
     status = janus_create_template(associations, role, cur_template);
@@ -1219,7 +1555,7 @@ JANUS_EXPORT janus_error janus_create_gallery(const std::vector<janus_template> 
 JANUS_EXPORT janus_error janus_serialize_gallery(const janus_gallery &gallery,
                                                  std::ostream &stream)
 {
-  // Make sure gallery is non-empty                                                                                                                               
+  // Make sure gallery is non-empty
   size_t num_templates = gallery->template_ids.size();
 
   std::cout << "Serializing gallery with " << num_templates << " non-empty templates." << std::endl;
@@ -1227,16 +1563,16 @@ JANUS_EXPORT janus_error janus_serialize_gallery(const janus_gallery &gallery,
   if (num_templates == 0)
     return JANUS_FAILURE_TO_SERIALIZE;
 
-  // First write out the number of templates                                                                                                                      
+  // First write out the number of templates
   stream.write(reinterpret_cast<const char*>(&num_templates), sizeof(size_t));
 
-  // Write out the feature dimension                                                                                                                              
+  // Write out the feature dimension
   stream.write(reinterpret_cast<const char*>(&gallery->feat_dim), sizeof(size_t));
 
-  // Write out template ID's                                                                                                                                      
+  // Write out template ID's
   stream.write(reinterpret_cast<const char*>(&gallery->template_ids[0]), sizeof(size_t) * num_templates);
 
-  // Write out the features                                                                                                                                       
+  // Write out the features
   stream.write(reinterpret_cast<const char*>(gallery->feats), sizeof(float) * gallery->feat_dim * num_templates);
 
   return JANUS_SUCCESS;
@@ -1247,18 +1583,18 @@ JANUS_EXPORT janus_error janus_deserialize_gallery(janus_gallery &gallery,
 {
   gallery = new janus_gallery_type;
 
-  // First, read in number of templates                                                                                                                           
+  // First, read in number of templates
   size_t num_templates;
   stream.read(reinterpret_cast<char*>(&num_templates), sizeof(size_t));
 
-  // Now read in the feature dimension                                                                                                                            
+  // Now read in the feature dimension
   stream.read(reinterpret_cast<char*>(&gallery->feat_dim), sizeof(size_t));
 
-  // Now read in the template ID's                                                                                                                                
+  // Now read in the template ID's
   gallery->template_ids.resize(num_templates);
   stream.read(reinterpret_cast<char*>(&gallery->template_ids[0]), sizeof(size_t) * num_templates);
 
-  // Now read in the features                                                                                                                                     
+  // Now read in the features
   gallery->feats = new float[gallery->feat_dim * num_templates];
   stream.read(reinterpret_cast<char*>(gallery->feats), sizeof(float) * gallery->feat_dim * num_templates);
 
@@ -1365,7 +1701,7 @@ void compute_similarity(float *corrMatrix, int galDim, int probeDim, std::vector
   int start = 0;
   for (int tp=0; tp<numTemplates; ++tp) {
     int corrLength = probeDim * gal_template_sizes[tp];
-    
+
     if (corrLength == 0) {
       similarity[tp] = -1;
     } else if (corrLength == 1) {
@@ -1373,7 +1709,7 @@ void compute_similarity(float *corrMatrix, int galDim, int probeDim, std::vector
     } else {
       int indexMax = cblas_isamax( corrLength, corrMatrix+start, 1 );
       float rawmax = (corrMatrix+start)[indexMax];
-    
+
       float alpha = 10.0;
       float numerator = 0;
       float denominator = 0;
@@ -1435,22 +1771,22 @@ JANUS_EXPORT janus_error janus_search(const janus_template &probe,
 
   size_t feat_dim = gallery->feat_dim;
 
-  //if (probe->pooled_feat.size() == 0) return JANUS_UNKNOWN_ERROR;                                                                                               
+  //if (probe->pooled_feat.size() == 0) return JANUS_UNKNOWN_ERROR;
   if (probe->pooled_feat.size() == 0) return JANUS_SUCCESS;
 
   float *correlationMatrix = new float[gallery->template_ids.size()];
 
   fast_correlation_normprobe(gallery->feats, &(probe->pooled_feat[0]), correlationMatrix, gallery->template_ids.size(), 1, feat_dim);
 
-  // Construct array of all (score,id) pairs                                                                                                                      
+  // Construct array of all (score,id) pairs
   std::vector< std::pair<janus_template_id, float> > search_results;
   for (int i=0; i < num_gal_templates; ++i) {
     search_results.push_back(std::make_pair(gallery->template_ids[i], correlationMatrix[i]));
   }
-  // Sort by similarity score                                                                                                                                     
+  // Sort by similarity score
   std::sort(search_results.begin(), search_results.end(), orderSearchResults);
 
-  // Return only the top N results                                                                                                                                
+  // Return only the top N results
   for (size_t i = 0; i < num_requested_returns && i < search_results.size(); ++i) {
     template_ids.push_back(search_results[i].first);
     similarities.push_back(search_results[i].second);
@@ -1467,7 +1803,7 @@ JANUS_EXPORT janus_error janus_cluster(const std::vector<janus_template> &templa
                                        const size_t hint,
                                        std::vector<cluster_pair> &clusters)
 {
-  janus_error status = JANUS_UNKNOWN_ERROR; 
+  janus_error status = JANUS_UNKNOWN_ERROR;
 
   if (templates.size() == 0)
     return status;
@@ -1487,7 +1823,7 @@ JANUS_EXPORT janus_error janus_cluster(const std::vector<janus_template> &templa
   int ND  = 2;
   int row = templates.size();
   int col = 0;
-  
+
   for (int i = 0; i < templates.size(); ++i) {
     if (templates[i]->pooled_feat.size() > 0) {
       col = templates[i]->pooled_feat.size();
@@ -1505,7 +1841,7 @@ JANUS_EXPORT janus_error janus_cluster(const std::vector<janus_template> &templa
 
   if (c_arr == NULL) {
     std::cerr << "Out of memory for clustering." << std::endl;
-    goto FAIL_C_ARRAY; 
+    goto FAIL_C_ARRAY;
   }
 
   for (size_t i = 0; i < row; ++i) {
@@ -1519,7 +1855,7 @@ JANUS_EXPORT janus_error janus_cluster(const std::vector<janus_template> &templa
   }
 
   // Convert array from c++ to python
-  pArray = PyArray_SimpleNewFromData(ND, dims, NPY_FLOAT, reinterpret_cast<void*>(c_arr)); 
+  pArray = PyArray_SimpleNewFromData(ND, dims, NPY_FLOAT, reinterpret_cast<void*>(c_arr));
   if (pArray == NULL) {
     std::cerr << "Converting args from c++ to python for " << cluster_func << "failed." << std::endl;
     goto FAIL_NP_ARRAY;
@@ -1554,7 +1890,7 @@ JANUS_EXPORT janus_error janus_cluster(const std::vector<janus_template> &templa
   pReturn = PyObject_CallFunctionObjArgs(pFunc, np_arr, NULL);
   if (pReturn == NULL) {
     std::cerr << "Executing python function " << cluster_func << " failed." << std::endl;
-    goto FAIL_CALL; 
+    goto FAIL_CALL;
   }
   if (!PyArray_Check(pReturn)) {
     std::cerr << "Python function " << cluster_func << " did not return an array." << std::endl;
@@ -1611,7 +1947,7 @@ JANUS_EXPORT janus_error janus_finalize()
   if (g_is_python_up) pythonFinalize();
 
   Py_Finalize();
-  
+
   return JANUS_SUCCESS;
 }
 
@@ -1633,4 +1969,3 @@ janus_error load_pca(std::string pca_file, cv::Mat &out_PCATransform, cv::Mat &o
 
   return JANUS_SUCCESS;
 }
-

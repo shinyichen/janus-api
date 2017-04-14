@@ -56,7 +56,7 @@ janus_error ImagePreproc::convertJanusMediaImageToOpenCV(janus_media media, int 
 
 janus_error ImagePreproc::process(cv::Mat image_in, janus_attributes metadata_attributes, cv::Mat &image_out)
 {
-  janus_error status; 
+  janus_error status;
 
   std::vector<cv::Point2f> landmarks;
   float landmark_confidence;
@@ -129,7 +129,7 @@ janus_error do_crop(cv::Mat image_in, janus_attributes metadata_attributes, cv::
   }
 
   // Look into speeding this up (vectorize it? implement via OpenCV?)
-  
+
   if (nh == 0 || nw == 0) {
     std::cout << "bad face bounding box, outside geometry of image" << std::endl;
     return JANUS_UNKNOWN_ERROR;
@@ -154,9 +154,76 @@ janus_error do_crop(cv::Mat image_in, janus_attributes metadata_attributes, cv::
   return JANUS_SUCCESS;
 }
 
+janus_error ImagePreproc::process_withrender_debug(cv::Mat image_in, janus_attributes metadata_attributes, int image_type, cv::Mat &out_cropped, cv::Mat &out_rend_fr, cv::Mat &out_rend_hp, cv::Mat &out_rend_fp, cv::Mat &out_aligned, float &out_yaw, std::vector<cv::Point2f> &landmarks, float &landmark_confidence)
+{
+  janus_error status;
+
+  // std::vector<cv::Point2f> landmarks;
+  // float landmark_confidence;
+
+  // Run Landmark Detection
+  if (image_type != 0) {
+    std::cout << "About to run LM Detection" << std::endl;
+    status = detect_landmarks_noanchors(image_in, metadata_attributes, image_type, landmarks, landmark_confidence);
+    std::cout << "\tlm confidence: " << landmark_confidence << "\t(Threshold confidence = " << m_landmark_conf_threshold << ")" << std::endl;
+  } else {
+    status = JANUS_UNKNOWN_ERROR;
+  }
+
+  if (status != JANUS_SUCCESS || landmark_confidence < m_landmark_conf_threshold) {
+    // Now Do Cropping
+    std::cout << "Doing Cropped step" << std::endl;
+    status = do_crop(image_in, metadata_attributes, out_cropped);
+    std::cout << "Done Cropped step: status = " << status << std::endl;
+
+    if (status != JANUS_SUCCESS) return status;
+
+    // Early Return -- Lm failed so only can do cropped image
+    return JANUS_SUCCESS;
+  }
+
+  // After running landmark, need to run lm2pose
+  cv::Mat image_poseCorrected;
+  std::vector<cv::Point2f> landmarks_poseCorrected;
+
+  std::cout << "About to run lm2pose" << std::endl;
+  cv::Mat image_in_copy = image_in.clone();
+  status = pythonGetPose(image_in_copy.rows, image_in_copy.cols, image_in_copy.channels(), image_in_copy.type(),
+                         image_in_copy.data, landmarks, 1, image_poseCorrected, landmarks_poseCorrected);
+
+  if (status != JANUS_SUCCESS) {
+    // getPose failed, need to do a graceful fallback
+    // can't do rendering w/o pose, but let's do align-frontal and put it in the 'cropped' image so
+    // create-template code doesn't try to do pooling
+    status = align_frontal(image_in, landmarks, out_cropped);
+
+    return status;
+  }
+
+  // Now do render
+  std::cout << "About to do rendering" << std::endl;
+  status = pythonDoRendering(image_poseCorrected, landmarks_poseCorrected, out_rend_fr, out_rend_hp, out_rend_fp, out_yaw);
+
+  if (status != JANUS_SUCCESS) return status;
+
+  std::cout << "About to do align image..." << std::endl;
+
+  if (fabs(out_yaw) < 30) {
+    status = align_frontal(image_in, landmarks, out_aligned);
+  } else {
+    status = align_profile(image_in, landmarks, out_yaw, out_aligned);
+  }
+
+  if (status != JANUS_SUCCESS) return status;
+
+  std::cout << "Done with align image." << std::endl;
+
+  return JANUS_SUCCESS;
+}
+
 janus_error ImagePreproc::process_withrender(cv::Mat image_in, janus_attributes metadata_attributes, int image_type, cv::Mat &out_cropped, cv::Mat &out_rend_fr, cv::Mat &out_rend_hp, cv::Mat &out_rend_fp, cv::Mat &out_aligned, float &out_yaw)
 {
-  janus_error status; 
+  janus_error status;
 
   std::vector<cv::Point2f> landmarks;
   float landmark_confidence;
@@ -428,7 +495,7 @@ janus_error ImagePreproc::align_frontal(cv::Mat image_in, std::vector<cv::Point2
   if (x0 < 0) x0 = 0;
   if (y1 >= transformedImg.rows) y1=transformedImg.rows-1;
   if (x1 >= transformedImg.cols) x1=transformedImg.cols-1;
-  
+
   cv::Rect cropped_region = cv::Rect(x0,y0,x1-x0,y1-y0 + 1);
   cv::Mat cropped_img(transformedImg, cropped_region);
   image_out = cropped_img;
@@ -440,33 +507,33 @@ janus_error ImagePreproc::align_frontal(cv::Mat image_in, std::vector<cv::Point2
 Eigen::Matrix<float, 3, 3> ImagePreproc::findNonReflexiveSimilarityTransform(std::vector<cv::Point2f> source, std::vector<cv::Point2f> target) {
   /*
     From matlab toolbox/images/images/cp2tform.m
-    
+
     For a nonreflective similarity:
-    
+
     let sc = s*cos(theta)
     let ss = s*sin(theta)
-        
+
     [ sc -ss
     [u v] = [x y 1] *   ss  sc
     tx  ty]
-        
+
     There are 4 unknowns: sc,ss,tx,ty.
-        
+
     Another way to write this is:
-        
+
     u = [x y 1 0] * [sc
     ss
     tx
     ty]
-        
+
     v = [y -x 0 1] * [sc
     ss
     tx
     ty]
-        
+
     With 2 or more correspondence points we can combine the u equations and
     the v equations for one linear system to solve for sc,ss,tx,ty.
-        
+
     [ u1  ] = [ x1  y1  1  0 ] * [sc]
     [ u2  ]   [ x2  y2  1  0 ]   [ss]
     [ ... ]   [ ...          ]   [tx]
@@ -475,7 +542,7 @@ Eigen::Matrix<float, 3, 3> ImagePreproc::findNonReflexiveSimilarityTransform(std
     [ v2  ]   [ y2 -x2  0  1 ]
     [ ... ]   [ ...          ]
     [ vn  ]   [ yn -xn  0  1 ]
-        
+
     Or rewriting the above matrix equation:
     U = X * r, where r = [sc ss tx ty]'
     so r = X\U.
@@ -560,7 +627,7 @@ float ImagePreproc::evaluateTransformation(std::vector<cv::Point2f> candidate, s
 
 // From matlab toolbox/images/images/cp2tform.m
 // Basically just call findSimilarityTransform on both original points and reflected points
-// and pick the one with the smallest L2 norm 
+// and pick the one with the smallest L2 norm
 //
 Eigen::Matrix<float, 3, 3> ImagePreproc::findSimilarityTransform(std::vector<cv::Point2f> source, std::vector<cv::Point2f> target) {
   // Find regular non-reflexive transform

@@ -11,13 +11,16 @@ link_directories(
 				${CMAKE_SOURCE_DIR}/../../lib
 				${CMAKE_CURRENT_SOURCE_DIR}/../../../3rdParty/OpenMesh-3.2/build/Build/lib/OpenMesh/
 )
-#LINK_LIBRARIES(${Boost_LIBRARIES}) # Deprecated but so convenient!
+
+include_directories(
+	../glaive/
+)
 
 #if (MSVC)
 #set(Boost_USE_STATIC_LIBS "On")
 #find_package( Boost 1.52 COMPONENTS system thread regex REQUIRED )
 #else()
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -std=c++1y -pedantic -Wextra")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -std=c++1y -pedantic -Wextra ${CMAKE_CURRENT_SOURCE_DIR}/../../../3rdParty/lib/libopencv_core.so")
 #find_package( Boost 1.52 COMPONENTS system thread REQUIRED )
 #endif()
 

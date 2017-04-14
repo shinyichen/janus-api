@@ -17,6 +17,7 @@ public:
   janus_error convertJanusMediaImageToOpenCV(janus_media media, int frame_num, cv::Mat &image_out);
   janus_error process(cv::Mat image_in, janus_attributes metadata_attributes, cv::Mat &image_out);
   janus_error process_withrender(cv::Mat image_in, janus_attributes metadata_attributes, int image_type, cv::Mat &out_cropped, cv::Mat &out_rend_fr, cv::Mat &out_rend_hp, cv::Mat &out_rend_fp, cv::Mat &out_aligned, float &out_yaw);
+  janus_error process_withrender_debug(cv::Mat image_in, janus_attributes metadata_attributes, int image_type, cv::Mat &out_cropped, cv::Mat &out_rend_fr, cv::Mat &out_rend_hp, cv::Mat &out_rend_fp, cv::Mat &out_aligned, float &out_yaw, std::vector<cv::Point2f> &landmarks, float &out_confidence);
 
 private:
   float m_landmark_conf_threshold;
