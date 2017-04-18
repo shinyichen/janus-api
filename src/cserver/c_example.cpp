@@ -7,12 +7,14 @@
 #include "iarpa_janus_io.h"
 #include "iarpa_janus.h"
 #include "janus_debug.h"
-// #include <opencv2/highgui/highgui.hpp>
+#include <opencv2/opencv.hpp>
+#include <boost/filesystem.hpp>
 
 // to compile
 // c++ -Wall -std=c++1y -pedantic -Wextra c_example.cpp -I include -Llib -lboost_system (-lglaive) -o c_example.out
 using namespace std;
 using namespace crow;
+using namespace cv;
 
 void signalHandler( int signum ) {
    cout << "Finalize Janus" << endl;
@@ -129,9 +131,31 @@ int main()
         result["landmarks"][i]["y"] = landmarks[i].y;
       }
 
-      // string path = "/nfs/div2/jchen/face-search/uploads/" + image_path + "_rend_fr";
-      // imwrite(path, rend_fr);
-      // result["rend_fr"] = path;
+      string path = image_path + "_rend_fr.jpg";
+      imwrite(path, rend_fr);
+      // pass only file name
+      boost::filesystem::path p1(path);
+      result["rend_fr"] = p1.filename().string();
+
+      path = image_path + "_cropped.jpg";
+      imwrite(path, cropped);
+      boost::filesystem::path p2(path);
+      result["cropped"] = p2.filename().string();
+
+      path = image_path + "_rend_hp.jpg";
+      imwrite(path, rend_hp);
+      boost::filesystem::path p3(path);
+      result["rend_hp"] = p3.filename().string();
+
+      path = image_path + "_rend_fp.jpg";
+      imwrite(path, rend_fp);
+      boost::filesystem::path p4(path);
+      result["rend_fp"] = p4.filename().string();
+
+      path = image_path + "_aligned.jpg";
+      imwrite(path, aligned);
+      boost::filesystem::path p5(path);
+      result["aligned"] = p5.filename().string();
 
       return response(result);
     });
