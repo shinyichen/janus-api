@@ -131,31 +131,43 @@ int main()
         result["landmarks"][i]["y"] = landmarks[i].y;
       }
 
-      string path = image_path + "_rend_fr.jpg";
-      imwrite(path, rend_fr);
-      // pass only file name
-      boost::filesystem::path p1(path);
-      result["rend_fr"] = p1.filename().string();
+      string path;
 
-      path = image_path + "_cropped.jpg";
-      imwrite(path, cropped);
-      boost::filesystem::path p2(path);
-      result["cropped"] = p2.filename().string();
+      if (!rend_fr.empty()) {
+        path = image_path + "_rend_fr.jpg";
+        imwrite(path, rend_fr);
+        // pass only file name
+        boost::filesystem::path p1(path);
+        result["rend_fr"] = p1.filename().string();
+      }
 
-      path = image_path + "_rend_hp.jpg";
-      imwrite(path, rend_hp);
-      boost::filesystem::path p3(path);
-      result["rend_hp"] = p3.filename().string();
+      if (!cropped.empty()) {
+        path = image_path + "_cropped.jpg";
+        imwrite(path, cropped);
+        boost::filesystem::path p2(path);
+        result["cropped"] = p2.filename().string();
+      }
 
-      path = image_path + "_rend_fp.jpg";
-      imwrite(path, rend_fp);
-      boost::filesystem::path p4(path);
-      result["rend_fp"] = p4.filename().string();
+      if (!rend_hp.empty()) {
+        path = image_path + "_rend_hp.jpg";
+        imwrite(path, rend_hp);
+        boost::filesystem::path p3(path);
+        result["rend_hp"] = p3.filename().string();
+      }
 
-      path = image_path + "_aligned.jpg";
-      imwrite(path, aligned);
-      boost::filesystem::path p5(path);
-      result["aligned"] = p5.filename().string();
+      if (!rend_fp.empty()) {
+        path = image_path + "_rend_fp.jpg";
+        imwrite(path, rend_fp);
+        boost::filesystem::path p4(path);
+        result["rend_fp"] = p4.filename().string();
+      }
+
+      if (!aligned.empty()) {
+        path = image_path + "_aligned.jpg";
+        imwrite(path, aligned);
+        boost::filesystem::path p5(path);
+        result["aligned"] = p5.filename().string();
+      }
 
       return response(result);
     });
