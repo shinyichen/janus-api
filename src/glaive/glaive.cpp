@@ -933,103 +933,103 @@ JANUS_EXPORT janus_error janus_create_template(std::vector<janus_association> &a
   return JANUS_SUCCESS;
 }
 
-// JANUS_EXPORT janus_error janus_create_template_debug(std::vector<janus_association> &associations,
-//                                                const janus_template_role role,
-//                                                janus_template &template_,
-//                                                std::vector<cv::Mat> &out_cropped,
-//                                              	 std::vector<cv::Mat> &out_rend_fr,
-//                                              	 std::vector<cv::Mat> &out_rend_hp,
-//                                              	 std::vector<cv::Mat> &out_rend_fp,
-//                                              	 std::vector<cv::Mat> &out_aligned,
-//                                              	 float *out_yaw,
-//                                              	 std::vector<std::vector<cv::Point2f>> &out_landmarks,
-//                                              	 float *out_confidence)
-// {
-//   // Need to send images to CNN Server in big batch; to do this set up background worker threads
-//   std::vector<std::thread>  workers;
-//
-//   std::vector< featv_t > featv_list;
-//   std::vector< janus_error > status_list;
-//   pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER;
-//
-//   std::cout << "Starting template creation" << std::endl;
-//
-//   int i = 0;
-//
-//   // For each image in tempalte, startup a new thread
-//   for (auto &&cur_association : associations) {
-//     if (is_image(cur_association)) {
-//       workers.push_back(std::thread(extract_features_debug, /*frameNum=*/0, role, std::ref(cur_association),
-// 				    std::ref(featv_list), std::ref(status_list), std::ref(mtx),
-//             std::ref(out_cropped[i]), std::ref(out_rend_fr[i]), std::ref(out_rend_hp[i]), std::ref(out_rend_fp[i]),
-//             std::ref(out_aligned[i])));// std::ref(out_yaw[i]), std::ref(out_landmarks[i]), std::ref(out_confidence[i])));
-//       // Because landmark detector is not thread safe, we have to do a join here, to do sequentially
-//       // TODO: create "thread pool" of landmark detectors that is actually a "process pool", i.e. forked processes
-//       for (std::thread& t : workers)
-//         t.join();
-//       workers.clear();
-//     } else { // video
-//       // Okay either we have a collection of frames, or we have all frames from a video
-//       std::vector< featv_t > video_featv_list;
-//       std::vector< janus_error > video_status_list;
-//       pthread_mutex_t video_mtx = PTHREAD_MUTEX_INITIALIZER;
-//       for (int frame_num = 0; frame_num < cur_association.media.data.size(); ++frame_num) {
-// 	workers.push_back(std::thread(extract_features, frame_num, role, std::ref(cur_association),
-// 				      std::ref(video_featv_list), std::ref(video_status_list), std::ref(video_mtx)));
-//
-// 	for (std::thread& t : workers)
-// 	  t.join();
-// 	workers.clear();
-//       }
-//
-//       // Do pooling for video seperately, then add to template feat list
-//       int valid_cnt;
-//       featv_t pooled_video_feat;
-//       janus_error status = do_pooling(video_featv_list, video_status_list, valid_cnt, pooled_video_feat);
-//       if (status == JANUS_SUCCESS && valid_cnt > 0) {
-// 	// If we succesfully pooled video features, let's add them to the list of template feature vectors
-// 	//  (Which will undergo second round of pooling below
-//
-// 	int pstatus = pthread_mutex_lock(&mtx);
-// 	if (pstatus != 0) perror("Could not take lock");
-//
-// 	featv_list.push_back(pooled_video_feat);
-// 	status_list.push_back(JANUS_SUCCESS);
-//
-// 	pstatus = pthread_mutex_unlock(&mtx);
-// 	if (pstatus != 0) perror("Could not release lock");
-//       }
-//     }
-//     i++;
-//   }
-//
-//   // Wait for all threads to finish
-//   for (std::thread& t : workers)
-//     t.join();
-//
-//   std::cout << "Done with featex for this template, moving on..." << std::endl;
-//
-//   // Make sure we got features back
-//   if (featv_list.size() == 0)
-//     return JANUS_FAILURE_TO_ENROLL;
-//
-//
-//   int valid_cnt;
-//   featv_t pooled_feature_vector;
-//   janus_error status = do_pooling(featv_list, status_list, valid_cnt, pooled_feature_vector);
-//
-//   if (status != JANUS_SUCCESS) return status;
-//   if (valid_cnt == 0) return JANUS_SUCCESS;
-//
-//
-//   // Now construct template using the computed feature vectors
-//   template_ = new janus_template_type;
-//   template_->pooled_feat = pooled_feature_vector;
-//
-//
-//   std::cout << "Done with template." << std::endl;
-//   return JANUS_SUCCESS;
-// }
+JANUS_EXPORT janus_error janus_create_template_debug(std::vector<janus_association> &associations,
+                                               const janus_template_role role,
+                                               janus_template &template_,
+                                               cv::Mat *out_cropped,
+                                             	 cv::Mat *out_rend_fr,
+                                             	 cv::Mat *out_rend_hp,
+                                             	 cv::Mat *out_rend_fp,
+                                             	 cv::Mat *out_aligned,
+                                             	 float *out_yaw,
+                                             	 std::vector<cv::Point2f> *out_landmarks,
+                                             	 float *out_confidence)
+{
+  // Need to send images to CNN Server in big batch; to do this set up background worker threads
+  std::vector<std::thread>  workers;
+
+  std::vector< featv_t > featv_list;
+  std::vector< janus_error > status_list;
+  pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER;
+
+  std::cout << "Starting template creation" << std::endl;
+
+  int i = 0;
+
+  // For each image in tempalte, startup a new thread
+  for (auto &&cur_association : associations) {
+    if (is_image(cur_association)) {
+      workers.push_back(std::thread(extract_features_debug, /*frameNum=*/0, role, std::ref(cur_association),
+				    std::ref(featv_list), std::ref(status_list), std::ref(mtx),
+            std::ref(out_cropped[i]), std::ref(out_rend_fr[i]), std::ref(out_rend_hp[i]), std::ref(out_rend_fp[i]),
+            std::ref(out_aligned[i]), std::ref(out_yaw[i]), std::ref(out_landmarks[i]), std::ref(out_confidence[i])));
+      // Because landmark detector is not thread safe, we have to do a join here, to do sequentially
+      // TODO: create "thread pool" of landmark detectors that is actually a "process pool", i.e. forked processes
+      for (std::thread& t : workers)
+        t.join();
+      workers.clear();
+    } else { // video
+      // Okay either we have a collection of frames, or we have all frames from a video
+      std::vector< featv_t > video_featv_list;
+      std::vector< janus_error > video_status_list;
+      pthread_mutex_t video_mtx = PTHREAD_MUTEX_INITIALIZER;
+      for (int frame_num = 0; frame_num < cur_association.media.data.size(); ++frame_num) {
+	workers.push_back(std::thread(extract_features, frame_num, role, std::ref(cur_association),
+				      std::ref(video_featv_list), std::ref(video_status_list), std::ref(video_mtx)));
+
+	for (std::thread& t : workers)
+	  t.join();
+	workers.clear();
+      }
+
+      // Do pooling for video seperately, then add to template feat list
+      int valid_cnt;
+      featv_t pooled_video_feat;
+      janus_error status = do_pooling(video_featv_list, video_status_list, valid_cnt, pooled_video_feat);
+      if (status == JANUS_SUCCESS && valid_cnt > 0) {
+	// If we succesfully pooled video features, let's add them to the list of template feature vectors
+	//  (Which will undergo second round of pooling below
+
+	int pstatus = pthread_mutex_lock(&mtx);
+	if (pstatus != 0) perror("Could not take lock");
+
+	featv_list.push_back(pooled_video_feat);
+	status_list.push_back(JANUS_SUCCESS);
+
+	pstatus = pthread_mutex_unlock(&mtx);
+	if (pstatus != 0) perror("Could not release lock");
+      }
+    }
+    i++;
+  }
+
+  // Wait for all threads to finish
+  for (std::thread& t : workers)
+    t.join();
+
+  std::cout << "Done with featex for this template, moving on..." << std::endl;
+
+  // Make sure we got features back
+  if (featv_list.size() == 0)
+    return JANUS_FAILURE_TO_ENROLL;
+
+
+  int valid_cnt;
+  featv_t pooled_feature_vector;
+  janus_error status = do_pooling(featv_list, status_list, valid_cnt, pooled_feature_vector);
+
+  if (status != JANUS_SUCCESS) return status;
+  if (valid_cnt == 0) return JANUS_SUCCESS;
+
+
+  // Now construct template using the computed feature vectors
+  template_ = new janus_template_type;
+  template_->pooled_feat = pooled_feature_vector;
+
+
+  std::cout << "Done with template." << std::endl;
+  return JANUS_SUCCESS;
+}
 
 int max_index(float *a, int n)
 {

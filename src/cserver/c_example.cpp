@@ -193,12 +193,14 @@ int main()
       }
 
       int image_count = arr.size() - 1;
+      string image_paths[image_count];
       vector<janus_association> associations;
       for (int i = 1; i < image_count+1; i ++) {
         auto img = arr[i];
         string image_path = json::dump(img["image_path"]);
         // remove double quotes from string
         image_path.erase(remove(image_path.begin(), image_path.end(), '\"' ), image_path.end());
+        image_paths[i-1] = image_path;
 
         // create media from image path
         janus_media media;
@@ -264,7 +266,18 @@ int main()
 		  // create template from associations, role, template
 		  janus_template template1;
 		  janus_template_role role;
-		  int ct_res = janus_create_template(associations, role, template1);
+      Mat out_cropped[image_count];
+    	Mat out_rend_fr[image_count];
+    	Mat out_rend_hp[image_count];
+    	Mat out_rend_fp[image_count];
+    	Mat out_aligned[image_count];
+    	float out_yaw[image_count];
+    	vector<Point2f> out_landmarks[image_count];
+    	float out_confidence[image_count];
+
+		  // int ct_res = janus_create_template(associations, role, template1);
+      int ct_res = janus_create_template_debug(associations, role, template1,
+        out_cropped, out_rend_fr, out_rend_hp, out_rend_fp, out_aligned, out_yaw, out_landmarks, out_confidence);
 
       for (int i = 0; i < image_count; i ++) {
         janus_media media = associations[i].media;
@@ -297,13 +310,64 @@ int main()
 
       json::wvalue result;
       for (int i = 0; i < return_template_ids.size(); i++) {
-        result[i]["template_id"] = return_template_ids[i];
-        result[i]["similarity"] = similarities[i];
+        result["results"][i]["template_id"] = return_template_ids[i];
+        result["results"][i]["similarity"] = similarities[i];
+      }
+
+      for (int i = 0; i < image_count; i++) {
+        string image_path = image_paths[i];
+        boost::filesystem::path p(image_path);
+        string filename = p.filename().string();
+
+        result[filename]["yaw"] = out_yaw[i];
+        result[filename]["confidence"] = out_confidence[i];
+        for (int j = 0; j < out_landmarks[i].size(); j++){
+          result[filename]["landmarks"][j]["x"] = out_landmarks[i][j].x;
+          result[filename]["landmarks"][j]["y"] = out_landmarks[i][j].y;
+        }
+
+        string path;
+
+        if (!out_rend_fr[i].empty()) {
+          path = image_path + "_rend_fr.jpg";
+          imwrite(path, out_rend_fr[i]);
+          // pass only file name
+          boost::filesystem::path p1(path);
+          result[filename]["rend_fr"] = p1.filename().string();
+        }
+
+        if (!out_cropped[i].empty()) {
+          path = image_path + "_cropped.jpg";
+          imwrite(path, out_cropped[i]);
+          boost::filesystem::path p2(path);
+          result[filename]["cropped"] = p2.filename().string();
+        }
+
+        if (!out_rend_hp[i].empty()) {
+          path = image_path + "_rend_hp.jpg";
+          imwrite(path, out_rend_hp[i]);
+          boost::filesystem::path p3(path);
+          result[filename]["rend_hp"] = p3.filename().string();
+        }
+
+        if (!out_rend_fp[i].empty()) {
+          path = image_path + "_rend_fp.jpg";
+          imwrite(path, out_rend_fp[i]);
+          boost::filesystem::path p4(path);
+          result[filename]["rend_fp"] = p4.filename().string();
+        }
+
+        if (!out_aligned[i].empty()) {
+          path = image_path + "_aligned.jpg";
+          imwrite(path, out_aligned[i]);
+          boost::filesystem::path p5(path);
+          result[filename]["aligned"] = p5.filename().string();
+        }
       }
 
       return response(result);
 
     });
 
-    app.port(8080).run();
+    app.port(8081).run();
 }
