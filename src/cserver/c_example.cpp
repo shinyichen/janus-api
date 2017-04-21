@@ -55,15 +55,17 @@ int main()
       cout << "========== CServer: detect bounding box ============" << endl;
       vector<janus_track> tracks;
       janus_detect(media, 50, tracks);
-      janus_attributes attributes = tracks[0].track[0];
-
       janus_free_media(media);
 
       json::wvalue result;
-      result["face_x"] = attributes.face_x;
-      result["face_y"] = attributes.face_y;
-      result["face_width"] = attributes.face_width;
-      result["face_height"] = attributes.face_height;
+      janus_attributes attributes;
+      for (int i = 0; i < tracks.size(); i++) {
+         attributes = tracks[i].track[0];
+         result[i]["face_x"] = attributes.face_x;
+         result[i]["face_y"] = attributes.face_y;
+         result[i]["face_width"] = attributes.face_width;
+         result[i]["face_height"] = attributes.face_height;
+      }
 
       return response(result);
     });
