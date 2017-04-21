@@ -14,7 +14,13 @@ JANUS_EXPORT janus_error janus_debug(janus_association &association,
 												cv::Mat &out_aligned,
 												float &out_yaw,
 												std::vector<cv::Point2f> &out_landmarks,
-												float &out_confidence);
+												float &out_confidence,
+												unsigned int &landmark_dur,
+												unsigned int &pose_dur,
+												unsigned int &render_dur,
+												unsigned int &align_dur,
+												unsigned int &featex_dur,
+												unsigned int &featex_batch_dur);
 
 JANUS_EXPORT janus_error janus_create_template_debug(
 	std::vector<janus_association> &associations,
@@ -27,6 +33,12 @@ JANUS_EXPORT janus_error janus_create_template_debug(
 	cv::Mat *out_aligned,
 	float *out_yaw,
 	std::vector<cv::Point2f> *out_landmarks,
-	float *out_confidence);
+	float *out_confidence,
+	unsigned int *landmark_dur,
+	unsigned int *pose_dur,
+	unsigned int *render_dur,
+	unsigned int *align_dur,
+	unsigned int *featex_dur,
+	unsigned int *featex_batch_dur);
 
 #endif

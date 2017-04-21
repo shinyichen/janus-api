@@ -120,8 +120,10 @@ int main()
       cv::Mat cropped, rend_fr, rend_hp, rend_fp, aligned;
       float yaw, confidence;
       std::vector<cv::Point2f> landmarks;
+      unsigned int landmark_dur, pose_dur, render_dur, align_dur, featex_dur, featex_batch_dur;
 
-      janus_debug(association, role, cropped, rend_fr, rend_hp, rend_fp, aligned, yaw, landmarks, confidence);
+      janus_debug(association, role, cropped, rend_fr, rend_hp, rend_fp, aligned, yaw, landmarks, confidence,
+        landmark_dur, pose_dur, render_dur, align_dur, featex_dur, featex_batch_dur);
 
       janus_free_media(media);
 
@@ -132,6 +134,12 @@ int main()
         result["landmarks"][i]["x"] = landmarks[i].x;
         result["landmarks"][i]["y"] = landmarks[i].y;
       }
+      result["landmark_dur"] = landmark_dur;
+      result["pose_dur"] = pose_dur;
+      result["render_dur"] = render_dur;
+      result["align_dur"] = align_dur;
+      result["featex_dur"] = featex_dur;
+      result["featex_batch_dur"] = featex_batch_dur;
 
       string path;
 
@@ -276,10 +284,17 @@ int main()
     	float out_yaw[image_count];
     	vector<Point2f> out_landmarks[image_count];
     	float out_confidence[image_count];
+      unsigned int landmark_dur[image_count];
+      unsigned int pose_dur[image_count];
+      unsigned int render_dur[image_count];
+      unsigned int align_dur[image_count];
+      unsigned int featex_dur[image_count];
+      unsigned int featex_batch_dur[image_count];
 
 		  // int ct_res = janus_create_template(associations, role, template1);
       int ct_res = janus_create_template_debug(associations, role, template1,
-        out_cropped, out_rend_fr, out_rend_hp, out_rend_fp, out_aligned, out_yaw, out_landmarks, out_confidence);
+        out_cropped, out_rend_fr, out_rend_hp, out_rend_fp, out_aligned, out_yaw, out_landmarks, out_confidence,
+        landmark_dur, pose_dur, render_dur, align_dur, featex_dur, featex_batch_dur);
 
       for (int i = 0; i < image_count; i ++) {
         janus_media media = associations[i].media;
@@ -327,6 +342,12 @@ int main()
           result[filename]["landmarks"][j]["x"] = out_landmarks[i][j].x;
           result[filename]["landmarks"][j]["y"] = out_landmarks[i][j].y;
         }
+        result[filename]["landmark_dur"] = landmark_dur[i];
+        result[filename]["pose_dur"] = pose_dur[i];
+        result[filename]["render_dur"] = render_dur[i];
+        result[filename]["align_dur"] = align_dur[i];
+        result[filename]["featex_dur"] = featex_dur[i];
+        result[filename]["featex_batch_dur"] = featex_batch_dur[i];
 
         string path;
 

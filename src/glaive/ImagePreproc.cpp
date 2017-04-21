@@ -5,6 +5,7 @@
 #include "python_wrappers.h"
 
 #include <libconfig.h++>
+#include <chrono>
 
 #include <opencv2/imgproc.hpp>
 #include <opencv2/opencv.hpp>
@@ -154,12 +155,15 @@ janus_error do_crop(cv::Mat image_in, janus_attributes metadata_attributes, cv::
   return JANUS_SUCCESS;
 }
 
-janus_error ImagePreproc::process_withrender_debug(cv::Mat image_in, janus_attributes metadata_attributes, int image_type, cv::Mat &out_cropped, cv::Mat &out_rend_fr, cv::Mat &out_rend_hp, cv::Mat &out_rend_fp, cv::Mat &out_aligned, float &out_yaw, std::vector<cv::Point2f> &landmarks, float &landmark_confidence)
+janus_error ImagePreproc::process_withrender_debug(cv::Mat image_in, janus_attributes metadata_attributes, int image_type,
+                                                   cv::Mat &out_cropped, cv::Mat &out_rend_fr, cv::Mat &out_rend_hp, cv::Mat &out_rend_fp, cv::Mat &out_aligned, float &out_yaw, std::vector<cv::Point2f> &landmarks, float &landmark_confidence,
+                                                   unsigned int &landmark_dur, unsigned int &render_dur, unsigned int &align_dur)
 {
   janus_error status;
 
   // std::vector<cv::Point2f> landmarks;
   // float landmark_confidence;
+  auto start_time = std::chrono::steady_clock::now();
 
   // Run Landmark Detection
   if (image_type != 0) {
@@ -169,6 +173,9 @@ janus_error ImagePreproc::process_withrender_debug(cv::Mat image_in, janus_attri
   } else {
     status = JANUS_UNKNOWN_ERROR;
   }
+
+  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time);
+  landmark_dur = duration.count();
 
   if (status != JANUS_SUCCESS || landmark_confidence < m_landmark_conf_threshold) {
     // Now Do Cropping
@@ -190,7 +197,6 @@ janus_error ImagePreproc::process_withrender_debug(cv::Mat image_in, janus_attri
   cv::Mat image_in_copy = image_in.clone();
   status = pythonGetPose(image_in_copy.rows, image_in_copy.cols, image_in_copy.channels(), image_in_copy.type(),
                          image_in_copy.data, landmarks, 1, image_poseCorrected, landmarks_poseCorrected);
-
   if (status != JANUS_SUCCESS) {
     // getPose failed, need to do a graceful fallback
     // can't do rendering w/o pose, but let's do align-frontal and put it in the 'cropped' image so
@@ -202,17 +208,23 @@ janus_error ImagePreproc::process_withrender_debug(cv::Mat image_in, janus_attri
 
   // Now do render
   std::cout << "About to do rendering" << std::endl;
+  start_time = std::chrono::steady_clock::now();
   status = pythonDoRendering(image_poseCorrected, landmarks_poseCorrected, out_rend_fr, out_rend_hp, out_rend_fp, out_yaw);
+  duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time);
+  render_dur = duration.count();
 
   if (status != JANUS_SUCCESS) return status;
 
   std::cout << "About to do align image..." << std::endl;
 
+  start_time = std::chrono::steady_clock::now();
   if (fabs(out_yaw) < 30) {
     status = align_frontal(image_in, landmarks, out_aligned);
   } else {
     status = align_profile(image_in, landmarks, out_yaw, out_aligned);
   }
+  duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time);
+  align_dur = duration.count();
 
   if (status != JANUS_SUCCESS) return status;
 

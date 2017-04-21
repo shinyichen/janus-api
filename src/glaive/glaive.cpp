@@ -408,12 +408,25 @@ void extract_features_debug(int frame_num,
                             cv::Mat &alignedImg,
                             float &yaw,
                             std::vector<cv::Point2f> &landmarks,
-                            float &confidence)
+                            float &confidence,
+                            unsigned int &landmark_dur,
+                            unsigned int &pose_dur,
+                            unsigned int &render_dur,
+                            unsigned int &align_dur,
+                            unsigned int &featex_dur,
+                            unsigned int &featex_batch_dur)
 {
   // First convert Janus media object into OpenCV object
   janus_error status;
 
   cv::Mat origImage;
+
+  landmark_dur = 0;
+  pose_dur = 0;
+  render_dur = 0;
+  align_dur = 0;
+  featex_dur = 0;
+  featex_batch_dur = 0;
 
   status = preproc.convertJanusMediaImageToOpenCV(cur_association.media, frame_num, origImage);
   if (status != JANUS_SUCCESS) {
@@ -426,13 +439,18 @@ void extract_features_debug(int frame_num,
   }
 
   // Determine pose
+  auto start_time = std::chrono::steady_clock::now();
   janus_attributes metadata_attributes = cur_association.metadata.track[frame_num];
   int face_type = pose_detector.detect_pose(origImage, metadata_attributes.face_x, metadata_attributes.face_y, metadata_attributes.face_width, metadata_attributes.face_height);
+  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time);
+  pose_dur = duration.count();
 
   std::cout << "Found face type: " << face_type << std::endl;
 
   // Now run preprocessing (i.e. landmarks + alignment + rendering)
-  status = preproc.process_withrender_debug(origImage, cur_association.metadata.track[frame_num], face_type, croppedImg, rendFrontalImg, rendHalfProfileImg, rendFullProfileImg, alignedImg, yaw, landmarks, confidence);
+  status = preproc.process_withrender_debug(origImage, cur_association.metadata.track[frame_num], face_type,
+                                            croppedImg, rendFrontalImg, rendHalfProfileImg, rendFullProfileImg, alignedImg, yaw, landmarks, confidence,
+                                            landmark_dur, render_dur, align_dur);
 
   if (status != JANUS_SUCCESS) {
     pthread_mutex_lock(&mtx);
@@ -456,7 +474,10 @@ void extract_features_debug(int frame_num,
     std::cout << "Only have cropped image, so doing featex of cropped image" << std::endl;
 
     try {
+      start_time = std::chrono::steady_clock::now();
       pooled_feature_vector = do_feature_extraction(croppedImg);
+      duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time);
+      featex_dur = duration.count();
     } catch (const std::exception &e) {
       std::cout << "Error: in feature extraction. Exception = " << e.what() << std::endl;
       pthread_mutex_lock(&mtx);
@@ -490,7 +511,7 @@ void extract_features_debug(int frame_num,
     }
 
     std::cout << "About to call feature extraction batch on rendered images" << std::endl;
-    auto start_time = std::chrono::steady_clock::now();
+    start_time = std::chrono::steady_clock::now();
     std::vector<featv_t> feature_vectors;
 
     try {
@@ -505,7 +526,8 @@ void extract_features_debug(int frame_num,
       return;
     }
 
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time);
+    duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time);
+    featex_batch_dur = duration.count();
     std::cout << "Batch featex took: " << duration.count() << " ms" << std::endl;
 
     std::cout << "About to pool rendered features" << std::endl;
@@ -783,7 +805,13 @@ JANUS_EXPORT janus_error janus_debug(janus_association &association,
                         cv::Mat &aligned,
                         float &yaw,
                         std::vector<cv::Point2f> &landmarks,
-                        float &confidence)
+                        float &confidence,
+                        unsigned int &landmark_dur,
+                        unsigned int &pose_dur,
+                        unsigned int &render_dur,
+                        unsigned int &align_dur,
+                        unsigned int &featex_dur,
+                        unsigned int &featex_batch_dur)
 {
   // Need to send images to CNN Server in big batch; to do this set up background worker threads
   std::vector<std::thread>  workers;
@@ -798,7 +826,8 @@ JANUS_EXPORT janus_error janus_debug(janus_association &association,
     if (is_image(association)) {
       workers.push_back(std::thread(extract_features_debug, /*frameNum=*/0, role, std::ref(association),
 				    std::ref(featv_list), std::ref(status_list), std::ref(mtx),
-            std::ref(cropped), std::ref(rend_fr), std::ref(rend_hp), std::ref(rend_fp), std::ref(aligned), std::ref(yaw), std::ref(landmarks), std::ref(confidence)));
+            std::ref(cropped), std::ref(rend_fr), std::ref(rend_hp), std::ref(rend_fp), std::ref(aligned), std::ref(yaw), std::ref(landmarks), std::ref(confidence),
+            std::ref(landmark_dur), std::ref(pose_dur), std::ref(render_dur), std::ref(align_dur), std::ref(featex_dur), std::ref(featex_batch_dur)));
 
       // Because landmark detector is not thread safe, we have to do a join here, to do sequentially
       // TODO: create "thread pool" of landmark detectors that is actually a "process pool", i.e. forked processes
@@ -813,7 +842,8 @@ JANUS_EXPORT janus_error janus_debug(janus_association &association,
       for (int frame_num = 0; frame_num < association.media.data.size(); ++frame_num) {
 	workers.push_back(std::thread(extract_features_debug, frame_num, role, std::ref(association),
 				      std::ref(video_featv_list), std::ref(video_status_list), std::ref(video_mtx),
-              std::ref(cropped), std::ref(rend_fr), std::ref(rend_hp), std::ref(rend_fp), std::ref(aligned), std::ref(yaw), std::ref(landmarks), std::ref(confidence)));
+              std::ref(cropped), std::ref(rend_fr), std::ref(rend_hp), std::ref(rend_fp), std::ref(aligned), std::ref(yaw), std::ref(landmarks), std::ref(confidence),
+              std::ref(landmark_dur), std::ref(pose_dur), std::ref(render_dur), std::ref(align_dur), std::ref(featex_dur), std::ref(featex_batch_dur)));
 
 	for (std::thread& t : workers)
 	  t.join();
@@ -943,7 +973,13 @@ JANUS_EXPORT janus_error janus_create_template_debug(std::vector<janus_associati
                                              	 cv::Mat *out_aligned,
                                              	 float *out_yaw,
                                              	 std::vector<cv::Point2f> *out_landmarks,
-                                             	 float *out_confidence)
+                                             	 float *out_confidence,
+                                               unsigned int *landmark_dur,
+                                               unsigned int *pose_dur,
+                                               unsigned int *render_dur,
+                                               unsigned int *align_dur,
+                                               unsigned int *featex_dur,
+                                               unsigned int *featex_batch_dur)
 {
   // Need to send images to CNN Server in big batch; to do this set up background worker threads
   std::vector<std::thread>  workers;
@@ -962,7 +998,8 @@ JANUS_EXPORT janus_error janus_create_template_debug(std::vector<janus_associati
       workers.push_back(std::thread(extract_features_debug, /*frameNum=*/0, role, std::ref(cur_association),
 				    std::ref(featv_list), std::ref(status_list), std::ref(mtx),
             std::ref(out_cropped[i]), std::ref(out_rend_fr[i]), std::ref(out_rend_hp[i]), std::ref(out_rend_fp[i]),
-            std::ref(out_aligned[i]), std::ref(out_yaw[i]), std::ref(out_landmarks[i]), std::ref(out_confidence[i])));
+            std::ref(out_aligned[i]), std::ref(out_yaw[i]), std::ref(out_landmarks[i]), std::ref(out_confidence[i]),
+            std::ref(landmark_dur[i]), std::ref(pose_dur[i]), std::ref(render_dur[i]), std::ref(align_dur[i]), std::ref(featex_dur[i]), std::ref(featex_batch_dur[i])));
       // Because landmark detector is not thread safe, we have to do a join here, to do sequentially
       // TODO: create "thread pool" of landmark detectors that is actually a "process pool", i.e. forked processes
       for (std::thread& t : workers)
