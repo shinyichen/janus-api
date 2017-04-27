@@ -41,30 +41,34 @@ int main()
     CROW_ROUTE(app, "/autodetect")
     .methods("POST"_method)
     ([](const request& req) {
-      auto body = json::load(req.body);
-      if (!body)
+      auto arr = json::load(req.body);
+      if (!arr)
         return response(400);
 
-      string image_path = json::dump(body["image_path"]);
-      // remove double quotes from string
-      image_path.erase(remove(image_path.begin(), image_path.end(), '\"' ), image_path.end());
-
-      janus_media media;
-      janus_load_media(image_path, media);
-
-      cout << "========== CServer: detect bounding box ============" << endl;
-      vector<janus_track> tracks;
-      janus_detect(media, 50, tracks);
-      janus_free_media(media);
-
       json::wvalue result;
-      janus_attributes attributes;
-      for (int i = 0; i < tracks.size(); i++) {
-         attributes = tracks[i].track[0];
-         result[i]["face_x"] = attributes.face_x;
-         result[i]["face_y"] = attributes.face_y;
-         result[i]["face_width"] = attributes.face_width;
-         result[i]["face_height"] = attributes.face_height;
+      for (int p = 0; p < arr.size(); p++) {
+        string image_path = json::dump(arr[p]);
+        cout << image_path << endl;
+
+        // remove double quotes from string
+        image_path.erase(remove(image_path.begin(), image_path.end(), '\"' ), image_path.end());
+
+        janus_media media;
+        janus_load_media(image_path, media);
+
+        cout << "========== CServer: detect bounding box ============" << endl;
+        vector<janus_track> tracks;
+        janus_detect(media, 50, tracks);
+        janus_free_media(media);
+
+        janus_attributes attributes;
+        for (int i = 0; i < tracks.size(); i++) {
+           attributes = tracks[i].track[0];
+           result[p][i]["face_x"] = attributes.face_x;
+           result[p][i]["face_y"] = attributes.face_y;
+           result[p][i]["face_width"] = attributes.face_width;
+           result[p][i]["face_height"] = attributes.face_height;
+        }
       }
 
       return response(result);
