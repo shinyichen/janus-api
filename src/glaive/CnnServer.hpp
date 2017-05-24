@@ -38,8 +38,8 @@ private:
   std::string sdk_path;
   int gpu_dev;
 
-  const std::string CNN_SOCKET_PATH_PREFIX = "/tmp/isi-janus-cnn-worker.";
-  const std::string LOCKFILE_PREFIX = "/tmp/isi-janus-cnn-worker.";
+  const std::string CNN_SOCKET_PATH_PREFIX = "/tmp/jennifer-janus-cnn-worker.";
+  const std::string LOCKFILE_PREFIX = "/tmp/jennifer-janus-cnn-worker.";
 
   std::string CNN_SOCKET_PATH;
   std::string LOCKFILE;
